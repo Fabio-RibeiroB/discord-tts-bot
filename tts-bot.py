@@ -4,9 +4,6 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import os
 from datetime import datetime, timedelta
-import csv
-import discord
-from discord.ext import commands
 from gtts import gTTS
 import asyncio
 
@@ -16,29 +13,42 @@ logger.setLevel(logging.INFO)
 # Create a handler to log to console
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
-# Create a formatter for the log messages
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-# Add the formatter to the console handler
 console_handler.setFormatter(formatter)
-
-# Add the console handler to the logger
 logger.addHandler(console_handler)
-logger.info("Loading variables...")
 
+logger.info("Loading variables...")
 load_dotenv()
 
 intents = discord.Intents.all()
 intents.messages = True
+intents.guilds = True
+intents.voice_states = True
+
 
 client = commands.Bot(command_prefix="$", intents=intents)
 
 # Dictionary to store active voice channels and their timers
 active_voice_channels = {}
 
+async def disconnect_after_timeout(channel):
+    try:
+        # Disconnect from the voice channel after 5 minutes of inactivity
+        await asyncio.sleep(300)  # 300 seconds = 5 minutes
+
+        # Check if there have been no new messages during the timeout period
+        if channel not in active_voice_channels or not active_voice_channels[channel]['timer'].done():
+            voice_channel = active_voice_channels[channel]['voice_channel']
+            await voice_channel.disconnect()
+            del active_voice_channels[channel]
+            logging.info(f"Bot disconnected from {channel}")
+    except asyncio.CancelledError:
+        logging.info(f"Timer cancelled for {channel}")
+
 @client.event
 async def on_ready():
     print('We have logged in as {0.user}'.format(client))
+
 
 @client.event
 async def on_message(message):
@@ -58,7 +68,10 @@ async def on_message(message):
 
             # Play the TTS message
             voice_channel = await channel.connect()
-            active_voice_channels[channel] = voice_channel  # Add the channel to active_voice_channels
+            active_voice_channels[channel] = {
+                'voice_channel': voice_channel,
+                'timer': None  # Initialize timer as None
+            }
 
             voice_channel.play(discord.FFmpegPCMAudio('tts_message.mp3'), after=lambda e: print('done', e))
 
@@ -66,17 +79,21 @@ async def on_message(message):
             while voice_channel.is_playing():
                 await asyncio.sleep(1)
 
-            # Disconnect from the voice channel after 5 minutes
-            await asyncio.sleep(300)  # 300 seconds = 5 minutes
-            await voice_channel.disconnect()
-
-            # Remove the channel from active_voice_channels after disconnecting
-            del active_voice_channels[channel]
+            # Start the timer after the TTS message finishes playing
+            active_voice_channels[channel]['timer'] = asyncio.create_task(disconnect_after_timeout(channel))
         else:
-            await message.channel.send("A TTS message is already playing in the voice channel.")
-    else:
-        await message.channel.send("You need to be in a voice channel to use this command.")
+            # Bot is already connected to the channel, just play the new TTS message
+            tts = gTTS(text=message.content, lang='en')
+            tts.save('tts_message.mp3')
 
+            active_voice_channels[channel]['voice_channel'].play(discord.FFmpegPCMAudio('tts_message.mp3'),
+                                                                after=lambda e: print('done', e))
+            # Reset the timer for the channel since a new message has been received
+            active_voice_channels[channel]['timer'].cancel()
+            active_voice_channels[channel]['timer'] = asyncio.create_task(disconnect_after_timeout(channel))
+    else:
+        #await message.channel.send("You need to be in a voice channel to use this command.")
+        logging.info(':(')
 
 
 
