@@ -55,6 +55,14 @@ async def on_message(message):
     # Ignore messages from the bot itself to avoid infinite loops
     if message.author == client.user:
         return
+    
+    # Check if the message is from the desired channel
+    desired_channel_id = os.getenv("CHANNEL_ID")
+
+    if message.channel.id != desired_channel_id:
+        return
+    
+    logging.info(f"{message.author.voice.channel.id}")
 
     # Check if the message is from a user in a voice channel
     if message.author.voice and message.author.voice.channel:
@@ -93,7 +101,7 @@ async def on_message(message):
             active_voice_channels[channel]['timer'] = asyncio.create_task(disconnect_after_timeout(channel))
     else:
         #await message.channel.send("You need to be in a voice channel to use this command.")
-        logging.info(':(')
+        logging.info("You need to be in a voice channel to use this command")
 
 
 
